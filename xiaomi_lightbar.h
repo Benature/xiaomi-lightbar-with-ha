@@ -33,6 +33,7 @@ private:
   int current_brightness = -1;
   int current_temp = -1;
   bool sync_flag = false;
+  bool is_on = false; // 跟踪挂灯物理开关状态
 
   uint8_t spi_transfer(uint8_t data) {
     uint8_t in = 0;
@@ -320,6 +321,7 @@ public:
           if (cnt == last_rx_counter)
             return 0;
           last_rx_counter = cnt;
+          tx_counter = cnt + 1; // 保持发送计数器递增超前，避免计数冲突
           return cmd;
         }
       }
@@ -329,39 +331,74 @@ public:
 
   void set_c(float c) { cold_val = c; }
   void set_w(float w) { warm_val = w; }
+  bool get_is_on() const { return is_on; }
+  void set_is_on(bool val) { is_on = val; }
+
+  // 手动/实体翻转电源状态
+  void toggle_power() {
+    send_packet(0x0100);
+    is_on = !is_on;
+    sync_flag = true;
+    if (!is_on) {
+      current_brightness = -1;
+      current_temp = -1;
+    }
+    ESP_LOGI("xiaomi_lightbar", "翻转挂灯电源状态，当前 is_on: %d", is_on);
+  }
 
   void apply() {
+    // 若由实体旋钮按键触发 HA 状态同步，挂灯硬件本身已动作，无需重复发包
     if (sync_flag) {
       sync_flag = false;
+      is_on = (cold_val + warm_val > 0.005f);
+      if (!is_on) {
+        current_brightness = -1;
+        current_temp = -1;
+      }
       return;
     }
 
     float total = cold_val + warm_val;
-    if (total <= 0.005f) {
-      send_packet(0x0100);
-      current_brightness = -1;
+    bool target_on = (total > 0.005f);
+
+    // 1. 关灯逻辑：当前处于开启状态，但目标要关灯
+    if (!target_on) {
+      if (is_on) {
+        ESP_LOGI("xiaomi_lightbar", "执行关灯 (发送 0x0100)");
+        send_packet(0x0100);
+        is_on = false;
+        current_brightness = -1;
+        current_temp = -1;
+      }
       return;
     }
 
+    // 2. 开灯逻辑：当前处于关闭状态，目标是要开灯
+    if (!is_on) {
+      ESP_LOGI("xiaomi_lightbar", "执行开灯唤醒 (发送 0x0100)");
+      send_packet(0x0100);
+      is_on = true;
+      delay(80); // 等待挂灯单片机完成开机唤醒
+    }
+
+    // 3. 计算目标亮度与色温档位 (0 - 15)
     int b_step = round(std::min(1.0f, total) * 15.0f);
     float c_ratio = cold_val / total;
     int t_step = round(c_ratio * 15.0f);
 
-    // 1. 亮度调节 (先打底 0x04F0，再必发 0x0400 + b_step 激活)
+    // 4. 亮度调节 (先打底 0x04F0，再必发 0x0400 + b_step 激活)
     if (b_step != current_brightness) {
       send_packet(0x04F0);
       delay(30);
-      send_packet(0x0400 + b_step); // 即使 b_step 为 0 也必须发，作为生效触发包
+      send_packet(0x0400 + b_step);
       current_brightness = b_step;
     }
 
-    // 2. 色温调节 (先打底 0x02F0，再必发 0x0200 + t_step 激活)
+    // 5. 色温调节 (先打底 0x02F0，再必发 0x0200 + t_step 激活)
     if (t_step != current_temp) {
       send_packet(0x02F0);
       delay(30);
-      send_packet(
-          0x0200 +
-          t_step); // 关键修复：即使 t_step 为 0 也必须发 0x0200 激活全暖光！
+      send_packet(0x0200 + t_step);
       current_temp = t_step;
     }
   }

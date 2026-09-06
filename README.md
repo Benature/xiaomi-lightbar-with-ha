@@ -125,6 +125,7 @@
 | :--- | :--- | :--- |
 | `light.xiaomi_monitor_lightbar` | `light` (CWWW) | 挂灯主控实体（开关、亮度 1-100%、色温 2000K-6500K） |
 | `sensor.desk_illuminance` | `sensor` (lx) | 桌面照度数据，自动平滑过滤 |
+| `button.toggle_lightbar_rf_power` | `button` | 手动翻转挂灯射频电源（断电或状态错位时一键校准） |
 | `button.sniff_remote_id` | `button` | 启动 20s 嗅探原装旋钮通信 ID |
 | `button.pair_xiaomi_lightbar` | `button` | 发送配对/重置数据包 |
 

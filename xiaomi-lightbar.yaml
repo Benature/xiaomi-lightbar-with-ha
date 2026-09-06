@@ -83,8 +83,17 @@ light:
     warm_white: warm_out
     cold_white_color_temperature: 6500 K
     warm_white_color_temperature: 2000 K
+    default_transition_length: 0s # 关键：禁用渐变动画，避免 1s 渐变期间高频重启防抖导致无响应
+    restore_mode: RESTORE_DEFAULT_OFF
 
 button:
+  - platform: template
+    name: "Toggle Lightbar RF Power"
+    icon: "mdi:power"
+    on_press:
+      - lambda: |-
+          get_lightbar().toggle_power();
+          id(monitor_light).toggle().perform();
   - platform: template
     name: "Pair Xiaomi Lightbar"
     icon: "mdi:link-variant"
