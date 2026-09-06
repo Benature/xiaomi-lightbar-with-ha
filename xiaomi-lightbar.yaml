@@ -1,0 +1,111 @@
+# Board: ESPHome Starter Kit By Apollo (Apollo Automation)
+# Definition: definitions/boards/apollo-esk-1/manifest.yaml
+
+esphome:
+  name: esp32-light-sensor
+  includes:
+    - xiaomi_lightbar.h
+  libraries:
+    - SPI
+    - "nrf24/RF24@^1.4.8"
+  # ✅ 使用官方标准的开机初始化钩子
+  on_boot:
+    priority: 600.0
+    then:
+      - lambda: |-
+          get_lightbar().begin();
+  friendly_name: "Desk Light Sensor"
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+# 启用 HA 原生 API（Home Assistant 将自动发现）
+api:
+  encryption:
+    key: !secret esp32_light_sensor__encryption_key
+ota:
+  platform: esphome
+logger:
+
+# 1. 声明 I2C 总线
+i2c:
+  sda: GPIO21
+  scl: GPIO22
+  scan: true
+# 2. 声明 BH1750 光照度传感器
+sensor:
+  - platform: bh1750
+    name: "Desk Illuminance"
+    address: 0x23
+    update_interval: 2s # 采样间隔
+    filters:
+      # 避免数值轻微跳变导致 HA 数据库频繁写入
+      - delta: 2.0 # 照度变化超过 2 lx 才上报
+      - sliding_window_moving_average:
+          window_size: 5 # 5 次滑动平均，平滑滤波
+          send_every: 1
+
+# 2. 虚拟冷暖双通道输出
+output:
+  - platform: template
+    id: cold_out
+    type: float
+    write_action:
+      - lambda: |-
+          get_lightbar().set_c(state);
+      - script.execute: debounce_update
+  - platform: template
+    id: warm_out
+    type: float
+    write_action:
+      - lambda: |-
+          get_lightbar().set_w(state);
+      - script.execute: debounce_update
+# 3. 防抖脚本 (等待两个通道都计算完毕，50ms 后一次性发包，避免频繁射频)
+script:
+  - id: debounce_update
+    mode: restart
+    then:
+      - delay: 50ms
+      - lambda: |-
+          get_lightbar().apply();
+# 4. 挂灯实体 (官方原生 CWW 冷暖色温灯平台)
+light:
+  - platform: cwww
+    name: "Xiaomi Monitor Lightbar"
+    id: monitor_light
+    cold_white: cold_out
+    warm_white: warm_out
+    cold_white_color_temperature: 6500 K
+    warm_white_color_temperature: 2000 K
+
+button:
+  - platform: template
+    name: "Pair Xiaomi Lightbar"
+    icon: "mdi:link-variant"
+    on_press:
+      - lambda: |-
+          get_lightbar().pair();
+  - platform: template
+    name: "Sniff Remote ID"
+    icon: "mdi:radar"
+    on_press:
+      - lambda: |-
+          get_lightbar().start_sniffing();
+
+# 后台监听实体旋钮动作并同步至 HA
+interval:
+  - interval: 30ms
+    then:
+      - lambda: |-
+          uint16_t cmd = get_lightbar().poll_remote();
+          if (cmd == 0x0100) {
+            ESP_LOGI("remote_sync", "检测到实体旋钮按下，同步翻转 HA 状态");
+            get_lightbar().set_sync_flag(true);
+            id(monitor_light).toggle().perform();
+          }
