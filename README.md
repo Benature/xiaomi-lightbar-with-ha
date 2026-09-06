@@ -1,5 +1,7 @@
 # Xiaomi Lightbar with Home Assistant (ESPHome)
 
+[English](README_en.md) | [中文](README.md)
+
 [![ESPHome](https://img.shields.io/badge/ESPHome-Compatible-brightgreen.svg)](https://esphome.io)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-Native%20API-blue.svg)](https://www.home-assistant.io)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -25,7 +27,10 @@
 ### 1. 硬件准备
 
 - **ESP32 开发板**（如 ESP32 DevKit / NodeMCU-32S / ESP32-WROOM 或 Apollo ESK-1）
-- **NRF24L01+ 2.4GHz 射频收发模块**（建议带屏蔽罩或加滤波电容，保证信号稳定）
+- **NRF24L01+ 2.4GHz 射频收发模块**（带天线版本信号更强）
+- **滤波去耦电容**：
+  - **10 µF**（电解电容或钽电容，负责瞬态低频大电流储能，防止发射时拉低电压）
+  - **0.1 µF / 100 nF**（独石/贴片陶瓷电容，负责高频去耦滤波，滤除高频杂波）
 - **BH1750 光照传感器**（I2C 接口，可选）
 - 杜邦线若干
 
@@ -35,13 +40,14 @@
 
 | NRF24L01 引脚 | ESP32 GPIO | 说明 |
 | :--- | :--- | :--- |
-| **VCC** | **3.3V** | ⚠️ **切勿接 5V**，建议在 VCC/GND 间并联 10µF 电容增强稳定性 |
+| **VCC** | **3.3V** | ⚠️ **切勿接 5V**！紧贴引脚**并联 10µF + 0.1µF 电容**到 GND |
 | **GND** | **GND** | 共地 |
 | **CE** | **GPIO 4** | 芯片使能 |
 | **CSN** | **GPIO 5** | SPI 片选 |
 | **SCK** | **GPIO 18** | SPI 时钟 |
 | **MOSI** | **GPIO 23** | SPI 主出从入 |
 | **MISO** | **GPIO 19** | SPI 主入从出（嗅探与接收旋钮信号必需） |
+| **IRQ** | - | 悬空不接（NC） |
 
 #### BH1750 光照传感器 ↔ ESP32（可选）
 
@@ -54,6 +60,92 @@
 
 > [!NOTE]
 > 如需修改引脚，可在 `xiaomi-lightbar.yaml`（针对 I2C）以及 `xiaomi_lightbar.h` 末尾的 `get_lightbar()` 实例化处修改。
+
+### 3. 接线示意图与电源滤波方案
+
+NRF24L01 对供电纹波和瞬态压降极其敏感，突发发射时电流较大。**强烈建议在 NRF24L01 的 VCC 与 GND 引脚根部并联一个 10µF 电容和一个 0.1µF 电容**：
+
+```text
+               ┌───────────────────────┐
+               │    NRF24L01 模块      │
+               │                       │
+               │   1:GND       2:VCC   │
+               │   3:CE        4:CSN   │
+               │   5:SCK       6:MOSI  │
+               │   7:MISO      8:IRQ   │
+               └───────┬───────────┬───┘
+                       │           │
+ESP32 GND ─────────────┴──┬─────┬──┘
+                          │     │
+                 [10µF 电解]   [0.1µF 瓷片]
+                          │     │
+ESP32 3.3V ───────────────┴─────┴──────> NRF24L01 Pin 2 (VCC)
+```
+
+#### 完整连接拓扑图 (Mermaid)
+
+```mermaid
+flowchart LR
+    subgraph ESP32["ESP32 开发板"]
+        direction TB
+        P3V3["3.3V 供电"]
+        PGND["GND 地线"]
+        G4["GPIO 4 (CE)"]
+        G5["GPIO 5 (CSN)"]
+        G18["GPIO 18 (SCK)"]
+        G23["GPIO 23 (MOSI)"]
+        G19["GPIO 19 (MISO)"]
+        G21["GPIO 21 (SDA)"]
+        G22["GPIO 22 (SCL)"]
+    end
+
+    subgraph Filter["电源滤波网络 (紧贴 NRF24L01)"]
+        direction TB
+        C10["10 µF 储能电容<br>(防止突发压降)"]
+        C01["0.1 µF (100nF) 高频电容<br>(滤除高频杂波)"]
+    end
+
+    subgraph NRF["NRF24L01+ 射频模块"]
+        direction TB
+        NVCC["Pin 2: VCC (3.3V)"]
+        NGND["Pin 1: GND"]
+        NCE["Pin 3: CE"]
+        NCSN["Pin 4: CSN"]
+        NSCK["Pin 5: SCK"]
+        NMOSI["Pin 6: MOSI"]
+        NMISO["Pin 7: MISO"]
+    end
+
+    subgraph BH["BH1750 光照传感器 (可选)"]
+        direction TB
+        BVCC["VCC (3.3V)"]
+        BGND["GND"]
+        BSDA["SDA"]
+        BSCL["SCL"]
+    end
+
+    %% 电源与滤波电容并联
+    P3V3 ==> NVCC
+    PGND ==> NGND
+    P3V3 --- C10 --- PGND
+    P3V3 --- C01 --- PGND
+
+    %% NRF24L01 SPI 连接
+    G4 --> NCE
+    G5 --> NCSN
+    G18 --> NSCK
+    G23 --> NMOSI
+    NMISO --> G19
+
+    %% I2C 传感器连接
+    P3V3 -.-> BVCC
+    PGND -.-> BGND
+    G21 -.-> BSDA
+    G22 -.-> BSCL
+
+    classDef cap fill:#fef3c7,stroke:#d97706,stroke-width:2px;
+    class C10,C01 cap;
+```
 
 ---
 
@@ -148,7 +240,7 @@
 
 1. **检查 MISO 接线**：嗅探必须依赖 MISO（GPIO 19）正常接收数据，如果 MISO 虚焊或断开，将只能发送不能接收。
 2. **缩短距离与多转动**：嗅探时间为 20 秒，点击按钮后请将遥控器靠近 NRF 模块并快速持续旋转。
-3. **供电滤波**：NRF24L01 对 3.3V 电源纹波极为敏感，如经常通信失败，请务必在 NRF24L01 的 VCC 和 GND 引脚并联一颗 10µF 钽电容或电解电容。
+3. **供电滤波**：NRF24L01 对 3.3V 电源纹波与瞬态压降极为敏感，如经常通信失败或偶尔丢包，请务必紧贴 NRF24L01 的 VCC 和 GND 引脚并联一颗 **10µF** 储能电容和一颗 **0.1µF (100nF)** 高频瓷片电容。
 </details>
 
 <details>
@@ -156,6 +248,14 @@
 
 本项目已在 `xiaomi_lightbar.h` 中加入了针对零步进（0-step）的底包与激活包修复（`0x02F0` 打底后补发 `0x0200` 触发包），完美支持 0~15 全范围阶梯调光和极暖光输出。
 </details>
+
+---
+
+## 🙏 致谢 (Acknowledgments)
+
+本项目射频逆向协议与通信指令参考并受益于以下优秀开源项目，在此深表感谢：
+
+- [lamperez/xiaomi-lightbar-nrf24](https://github.com/lamperez/xiaomi-lightbar-nrf24.git) - 提供了米家屏幕挂灯 2.4GHz 射频协议、报文结构与 CRC16 算法的基础逆向工程研究。
 
 ---
 
