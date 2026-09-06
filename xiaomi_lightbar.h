@@ -184,7 +184,7 @@ public:
     write_register(NRF_REG_RX_PW_P1, 12);
 
     enter_rx_mode();
-    ESP_LOGI("xiaomi_lightbar", "初始化就绪 (Remote ID: 0x%06X)", remote_id);
+    ESP_LOGI("xiaomi_lightbar", "初始化就绪 (Remote ID: 0x%06X)", (unsigned int)remote_id);
   }
 
   // 方法 1：配对对码指令（0x0600 长按重置）
@@ -247,7 +247,7 @@ public:
             if (compute_crc16(chk, 15) == crc) {
               ESP_LOGW("sniffer", "****************************************");
               ESP_LOGW("sniffer", "🎉 成功捕获实体遥控器！");
-              ESP_LOGW("sniffer", "🎯 你的真实 Remote ID: 0x%06X", cand_id);
+              ESP_LOGW("sniffer", "🎯 你的真实 Remote ID: 0x%06X", (unsigned int)cand_id);
               ESP_LOGW("sniffer", "****************************************");
               found = true;
               break;
